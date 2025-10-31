@@ -1,0 +1,65 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    /* ChatGPT-style color scheme */
+    --bg-primary: #ffffff;
+    --bg-secondary: #f7f7f8;
+    --bg-tertiary: #ececf1;
+    --bg-chat-user: #f7f7f8;
+    --bg-chat-assistant: #ffffff;
+    --text-primary: #0d0d0d;
+    --text-secondary: #676767;
+    --text-tertiary: #acacbe;
+    --accent: #10a37f;
+    --accent-hover: #0d8a6a;
+    --border: #e5e5e5;
+    --border-light: #f0f0f0;
+    --success: #10a37f;
+    --error: #ef4444;
+    --sidebar-bg: #f7f7f8;
+    --sidebar-hover: #ececf1;
+    --icon-color: #676767;
+
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+        'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+        sans-serif;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+    margin: 0;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    overflow: hidden;
+}
+
+#root {
+    width: 100vw;
+    height: 100vh;
+}
+
+/* Scrollbar styling - minimal like ChatGPT */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.2);
+}
