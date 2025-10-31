@@ -5,6 +5,24 @@ Hotel function implementations (mock data for demo)
 import random
 from datetime import datetime, timedelta
 
+# In-memory storage for reservations (session-level state)
+# Format: {reservation_id: {guest_name, check_in, check_out, room_type, num_guests, room_number, total_amount, status}}
+RESERVATIONS_DB = {}
+
+
+def get_all_active_reservations() -> list:
+    """Get all active (not cancelled) reservations."""
+    return [res for res in RESERVATIONS_DB.values() if res.get("status") == "confirmed"]
+
+
+def get_reservation_by_guest_name(guest_name: str) -> list:
+    """Find reservations by guest name."""
+    return [
+        res
+        for res in RESERVATIONS_DB.values()
+        if guest_name.lower() in res.get("guest_name", "").lower()
+    ]
+
 
 async def execute_hotel_function(function_name: str, args: dict) -> dict:
     """
@@ -44,25 +62,84 @@ async def execute_hotel_function(function_name: str, args: dict) -> dict:
 
 async def check_room_availability(args: dict) -> dict:
     """Check room availability (mock implementation)."""
-    available_rooms = random.randint(5, 20)
-    room_type = args.get("room_type", "standard")
+    room_type = args.get("room_type", "all")
+    check_in = args.get("check_in_date")
+    check_out = args.get("check_out_date")
 
-    price_map = {"standard": 150, "deluxe": 250, "suite": 400}
+    price_map = {"standard": 4500, "deluxe": 7500, "suite": 12000}  # 新台幣 NT$
 
-    return {
-        "available": True,
-        "count": available_rooms,
-        "room_type": room_type,
-        "price_per_night": price_map.get(room_type, 150),
-        "check_in": args.get("check_in_date"),
-        "check_out": args.get("check_out_date"),
-        "message": f"We have {available_rooms} {room_type} rooms available for your dates.",
-    }
+    # If room_type is "all" or not specified, return all room types
+    if room_type == "all":
+        room_availability = []
+        total_available = 0
+
+        for rtype, price in price_map.items():
+            available = random.randint(3, 15)
+            total_available += available
+            room_availability.append(
+                {
+                    "room_type": rtype,
+                    "available_count": available,
+                    "price_per_night": price,
+                }
+            )
+
+        return {
+            "available": True,
+            "room_types": room_availability,
+            "total_rooms": total_available,
+            "check_in": check_in,
+            "check_out": check_out,
+            "message": f"We have {total_available} rooms available across all types for your dates.",
+        }
+
+    # Single room type query
+    else:
+        available_rooms = random.randint(5, 20)
+
+        return {
+            "available": True,
+            "count": available_rooms,
+            "room_type": room_type,
+            "price_per_night": price_map.get(room_type, 150),
+            "check_in": check_in,
+            "check_out": check_out,
+            "message": f"We have {available_rooms} {room_type} rooms available for your dates.",
+        }
 
 
 async def make_reservation(args: dict) -> dict:
-    """Create a new reservation (mock implementation)."""
+    """Create a new reservation and store in memory."""
     reservation_id = f"RES{random.randint(100000, 999999)}"
+    room_number = f"{random.randint(1, 5)}{random.randint(0, 9)}{random.randint(1, 9)}"
+
+    # Calculate total amount
+    check_in = datetime.strptime(args.get("check_in_date"), "%Y-%m-%d")
+    check_out = datetime.strptime(args.get("check_out_date"), "%Y-%m-%d")
+    nights = (check_out - check_in).days
+
+    price_map = {"standard": 4500, "deluxe": 7500, "suite": 12000}
+    room_type = args.get("room_type")
+    price_per_night = price_map.get(room_type, 4500)
+    total_amount = price_per_night * nights
+
+    # Store in memory
+    reservation_data = {
+        "reservation_id": reservation_id,
+        "guest_name": args.get("guest_name"),
+        "check_in": args.get("check_in_date"),
+        "check_out": args.get("check_out_date"),
+        "room_type": room_type,
+        "num_guests": args.get("num_guests", 1),
+        "room_number": room_number,
+        "total_amount": total_amount,
+        "price_per_night": price_per_night,
+        "nights": nights,
+        "status": "confirmed",
+        "created_at": datetime.now().isoformat(),
+    }
+
+    RESERVATIONS_DB[reservation_id] = reservation_data
 
     return {
         "success": True,
@@ -70,49 +147,108 @@ async def make_reservation(args: dict) -> dict:
         "guest_name": args.get("guest_name"),
         "check_in": args.get("check_in_date"),
         "check_out": args.get("check_out_date"),
-        "room_type": args.get("room_type"),
+        "room_type": room_type,
         "num_guests": args.get("num_guests", 1),
-        "room_number": f"{random.randint(1, 5)}{random.randint(0, 9)}{random.randint(1, 9)}",
+        "room_number": room_number,
+        "total_amount": total_amount,
+        "price_per_night": price_per_night,
+        "nights": nights,
         "confirmation": f"Reservation {reservation_id} confirmed",
-        "message": f"Your reservation has been confirmed! Confirmation number: {reservation_id}",
+        "message": f"訂房完成！確認號碼：{reservation_id}，總金額：NT$ {total_amount:,}（{nights} 晚）",
     }
 
 
 async def check_reservation(args: dict) -> dict:
-    """Look up an existing reservation (mock implementation)."""
+    """Look up an existing reservation from memory."""
     reservation_id = args.get("reservation_id")
-    guest_name = args.get("guest_name", "John Doe")
 
-    return {
-        "found": True,
-        "reservation_id": reservation_id,
-        "guest_name": guest_name,
-        "check_in": (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d"),
-        "check_out": (datetime.now() + timedelta(days=10)).strftime("%Y-%m-%d"),
-        "room_type": "deluxe",
-        "room_number": "305",
-        "num_guests": 2,
-        "status": "confirmed",
-        "total_amount": 750.00,
-        "message": f"Found reservation {reservation_id} for {guest_name} - deluxe room #305",
-    }
+    # Check in-memory database
+    if reservation_id in RESERVATIONS_DB:
+        reservation = RESERVATIONS_DB[reservation_id]
+        return {
+            "found": True,
+            "reservation_id": reservation_id,
+            "guest_name": reservation["guest_name"],
+            "check_in": reservation["check_in"],
+            "check_out": reservation["check_out"],
+            "room_type": reservation["room_type"],
+            "room_number": reservation["room_number"],
+            "num_guests": reservation["num_guests"],
+            "status": reservation["status"],
+            "total_amount": reservation["total_amount"],
+            "price_per_night": reservation["price_per_night"],
+            "nights": reservation["nights"],
+            "message": f"找到訂房記錄 {reservation_id}：{reservation['guest_name']}，{reservation['room_type']} {reservation['room_number']} 號房",
+        }
+    else:
+        return {
+            "found": False,
+            "reservation_id": reservation_id,
+            "message": f"查無訂房記錄 {reservation_id}，請確認訂房編號是否正確",
+        }
 
 
 async def cancel_reservation(args: dict) -> dict:
-    """Cancel a reservation (mock implementation)."""
+    """Cancel a reservation from memory."""
     reservation_id = args.get("reservation_id")
-    reason = args.get("reason", "Guest requested")
+    reason = args.get("reason", "客人要求取消")
 
-    refund_amount = random.uniform(300, 600)
+    # Check if reservation exists
+    if reservation_id not in RESERVATIONS_DB:
+        return {
+            "success": False,
+            "reservation_id": reservation_id,
+            "message": f"查無訂房記錄 {reservation_id}，無法取消",
+        }
+
+    reservation = RESERVATIONS_DB[reservation_id]
+
+    # Check if already cancelled
+    if reservation["status"] == "cancelled":
+        return {
+            "success": False,
+            "reservation_id": reservation_id,
+            "message": f"訂房 {reservation_id} 已經取消過了",
+        }
+
+    # Calculate refund based on cancellation timing
+    check_in_date = datetime.strptime(reservation["check_in"], "%Y-%m-%d")
+    days_until_checkin = (check_in_date - datetime.now()).days
+    total_amount = reservation["total_amount"]
+
+    # Refund policy
+    if days_until_checkin >= 7:
+        refund_rate = 1.0  # 100% refund
+        refund_note = "提前 7 天以上取消，全額退款"
+    elif days_until_checkin >= 3:
+        refund_rate = 0.8  # 80% refund
+        refund_note = "提前 3-7 天取消，退款 80%"
+    elif days_until_checkin >= 1:
+        refund_rate = 0.5  # 50% refund
+        refund_note = "提前 1-3 天取消，退款 50%"
+    else:
+        refund_rate = 0.0  # No refund
+        refund_note = "當天取消，無法退款"
+
+    refund_amount = total_amount * refund_rate
+
+    # Update status
+    reservation["status"] = "cancelled"
+    reservation["cancelled_at"] = datetime.now().isoformat()
+    reservation["cancellation_reason"] = reason
 
     return {
         "success": True,
         "reservation_id": reservation_id,
+        "guest_name": reservation["guest_name"],
         "cancellation_reason": reason,
-        "refund_amount": round(refund_amount, 2),
-        "refund_method": "Original payment method",
-        "processing_time": "3-5 business days",
-        "message": f"Reservation {reservation_id} has been cancelled. Refund of ${refund_amount:.2f} will be processed in 3-5 business days.",
+        "original_amount": total_amount,
+        "refund_amount": int(refund_amount),
+        "refund_rate": f"{int(refund_rate * 100)}%",
+        "refund_note": refund_note,
+        "refund_method": "原付款方式",
+        "processing_time": "3-5 個工作天",
+        "message": f"訂房 {reservation_id} 已取消。{refund_note}，退款金額 NT$ {int(refund_amount):,}，預計 3-5 個工作天退回原付款帳戶。",
     }
 
 
@@ -122,43 +258,43 @@ async def get_hotel_amenities(args: dict) -> dict:
 
     amenities = {
         "pool": {
-            "name": "Outdoor Pool",
-            "hours": "6:00 AM - 10:00 PM daily",
-            "features": ["Heated", "Poolside bar", "Lounge chairs"],
-            "description": "Outdoor heated pool open year-round with poolside service",
+            "name": "戶外游泳池",
+            "hours": "每日 06:00 - 22:00",
+            "features": ["溫水加熱", "池畔酒吧", "躺椅休憩區"],
+            "description": "全年開放的溫水戶外泳池，提供池畔服務",
         },
         "gym": {
-            "name": "Fitness Center",
-            "hours": "24 hours",
+            "name": "健身中心",
+            "hours": "24 小時開放",
             "features": [
-                "Cardio equipment",
-                "Free weights",
-                "Yoga mats",
-                "Towel service",
+                "有氧運動器材",
+                "自由重量訓練區",
+                "瑜珈墊",
+                "毛巾服務",
             ],
-            "description": "24-hour fitness center with modern equipment",
+            "description": "24 小時開放的健身中心，配備現代化器材",
         },
         "spa": {
-            "name": "Serenity Spa",
-            "hours": "9:00 AM - 9:00 PM",
-            "services": ["Massages", "Facials", "Body treatments", "Sauna"],
-            "description": "Full-service spa offering relaxation and rejuvenation treatments",
+            "name": "靜心 SPA",
+            "hours": "每日 09:00 - 21:00",
+            "services": ["按摩", "臉部護理", "身體療程", "三溫暖"],
+            "description": "提供完整放鬆與舒壓療程的全方位 SPA 中心",
         },
         "restaurant": {
-            "name": "Hotel Restaurants",
+            "name": "飯店餐廳",
             "options": [
-                "La Bella Vita (Italian cuisine)",
-                "Sakura (Japanese restaurant)",
-                "The American Grill",
+                "貝拉維塔（義式料理）",
+                "櫻花亭（日式料理）",
+                "美式烤肉館",
             ],
-            "hours": "Various - 6:00 AM - 11:00 PM",
-            "description": "Three on-site restaurants serving international cuisine",
+            "hours": "各餐廳時間不同，整體營業 06:00 - 23:00",
+            "description": "三家不同風格的餐廳，提供國際美食料理",
         },
         "parking": {
-            "name": "Parking Services",
-            "type": "Complimentary valet parking",
-            "features": ["24-hour valet", "Covered parking", "EV charging stations"],
-            "description": "Complimentary valet parking for all hotel guests",
+            "name": "停車服務",
+            "type": "免費代客停車",
+            "features": ["24小時代客泊車", "室內停車場", "電動車充電站"],
+            "description": "為所有住宿旅客提供免費代客停車服務",
         },
     }
 

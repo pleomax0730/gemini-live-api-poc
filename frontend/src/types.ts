@@ -20,6 +20,17 @@ export interface WebSocketMessage {
     text?: string;
 }
 
+export interface ActivityLog {
+    id: string;
+    type: 'function_call' | 'websocket';
+    timestamp: Date;
+    status: 'pending' | 'executing' | 'complete' | 'error';
+    functionName?: string;
+    args?: Record<string, unknown>;
+    result?: unknown;
+    executionTime?: number;
+}
+
 export const TOOL_DEFINITIONS = [
     {
         id: 'check_room_availability',

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
-import { Message, ToolCall, WebSocketMessage, TOOL_DEFINITIONS } from './types';
+import { Message, ToolCall, WebSocketMessage, ActivityLog, TOOL_DEFINITIONS } from './types';
 
 function App() {
     const [ws, setWs] = useState<WebSocket | null>(null);
@@ -16,8 +16,12 @@ function App() {
             status: 'idle' as const,
         }))
     );
+    const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+    const [expandedLogIds, setExpandedLogIds] = useState<Set<string>>(new Set());
+
     const wsRef = useRef<WebSocket | null>(null);
     const connectionPromiseRef = useRef<Promise<WebSocket> | null>(null);
+    const functionCallStartTimes = useRef<Map<string, number>>(new Map());
 
     const audioContextRef = useRef<AudioContext | null>(null);
     const recordingContextRef = useRef<AudioContext | null>(null);
@@ -232,6 +236,22 @@ function App() {
     const handleToolCall = (toolCallData: any) => {
         if (toolCallData.functionCalls) {
             toolCallData.functionCalls.forEach((fc: any) => {
+                const logId = `${fc.name}-${Date.now()}`;
+                const startTime = Date.now();
+                functionCallStartTimes.current.set(logId, startTime);
+
+                // Create activity log with executing status
+                const activityLog: ActivityLog = {
+                    id: logId,
+                    type: 'function_call',
+                    timestamp: new Date(),
+                    status: 'executing',
+                    functionName: fc.name,
+                    args: fc.args,
+                };
+                setActivityLogs(prev => [activityLog, ...prev]);
+
+                // Update tool status
                 setToolCalls(prev =>
                     prev.map(tool =>
                         tool.id === fc.name
@@ -242,11 +262,24 @@ function App() {
 
                 // Mark as completed after 2 seconds (simulated)
                 setTimeout(() => {
+                    const executionTime = Date.now() - startTime;
+
+                    // Update activity log with complete status and execution time
+                    setActivityLogs(prev =>
+                        prev.map(log =>
+                            log.id === logId
+                                ? { ...log, status: 'complete', executionTime, result: { success: true } }
+                                : log
+                        )
+                    );
+
                     setToolCalls(prev =>
                         prev.map(tool =>
                             tool.id === fc.name ? { ...tool, status: 'completed' } : tool
                         )
                     );
+
+                    functionCallStartTimes.current.delete(logId);
 
                     // Reset to idle after 3 more seconds
                     setTimeout(() => {
@@ -453,10 +486,107 @@ function App() {
         }
     };
 
+    // Helper functions
+    const toggleExpandLog = (logId: string) => {
+        setExpandedLogIds(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(logId)) {
+                newSet.delete(logId);
+            } else {
+                newSet.add(logId);
+            }
+            return newSet;
+        });
+    };
+
+    const clearActivityLogs = () => {
+        setActivityLogs([]);
+    };
+
+    const formatJson = (data: unknown): string => {
+        try {
+            return JSON.stringify(data, null, 2);
+        } catch {
+            return String(data);
+        }
+    };
+
+    const formatTime = (date: Date): string => {
+        const hours = date.getHours().toString().padStart(2, '0');
+        const minutes = date.getMinutes().toString().padStart(2, '0');
+        const seconds = date.getSeconds().toString().padStart(2, '0');
+        const ms = date.getMilliseconds().toString().padStart(3, '0');
+        return `${hours}:${minutes}:${seconds}.${ms}`;
+    };
+
     return (
         <div className="app">
             {/* Main Content */}
             <div className="main-container">
+                {/* Activity Panel */}
+                <div className="activity-panel">
+                    <div className="activity-header">
+                        <h3>Function Activity</h3>
+                        <div className="activity-header-actions">
+                            <span className="activity-count">{activityLogs.length} calls</span>
+                            <button className="clear-button" onClick={clearActivityLogs}>
+                                Clear
+                            </button>
+                        </div>
+                    </div>
+                    <div className="activity-list">
+                        {activityLogs.length === 0 ? (
+                            <div className="empty-logs">No function calls yet</div>
+                        ) : (
+                            activityLogs.map((log) => (
+                                <div key={log.id} className={`activity-log-item ${log.status}`}>
+                                    <div className="log-header">
+                                        <span className={`status-badge ${log.status}`}>
+                                            {log.status === 'executing' && '⟳'}
+                                            {log.status === 'complete' && '✓'}
+                                            {log.status === 'error' && '✗'}
+                                            {log.status === 'pending' && '○'}
+                                            {' '}{log.status}
+                                        </span>
+                                        {log.executionTime !== undefined && (
+                                            <span className="execution-time">{log.executionTime}ms</span>
+                                        )}
+                                    </div>
+                                    <div className="log-function-name">{log.functionName}</div>
+                                    <div className="log-timestamp">{formatTime(log.timestamp)}</div>
+
+                                    {log.args && (
+                                        <div className="json-section">
+                                            <button
+                                                className="json-toggle"
+                                                onClick={() => toggleExpandLog(`${log.id}-args`)}
+                                            >
+                                                {expandedLogIds.has(`${log.id}-args`) ? '▼' : '▶'} Args
+                                            </button>
+                                            {expandedLogIds.has(`${log.id}-args`) && (
+                                                <pre className="json-viewer">{formatJson(log.args)}</pre>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {log.result !== undefined && (
+                                        <div className="json-section">
+                                            <button
+                                                className="json-toggle"
+                                                onClick={() => toggleExpandLog(`${log.id}-result`)}
+                                            >
+                                                {expandedLogIds.has(`${log.id}-result`) ? '▼' : '▶'} Result
+                                            </button>
+                                            {expandedLogIds.has(`${log.id}-result`) && (
+                                                <pre className="json-viewer">{formatJson(log.result)}</pre>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
                 <div className="conversation-panel">
                     <div className="messages-container">
                         {messages.length === 0 ? (

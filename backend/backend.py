@@ -58,8 +58,30 @@ class LiveAPISession:
         try:
             model_path = f"publishers/google/models/{MODEL_ID}"
 
-            # Get system instruction from dedicated module
-            system_instruction = get_system_instruction()
+            # Get current time in UTC+8 (Taiwan time)
+            from datetime import datetime, timezone, timedelta
+
+            utc_plus_8 = timezone(timedelta(hours=8))
+            now = datetime.now(utc_plus_8)
+
+            # Format: "2024-10-31 14:30:00 (星期四)"
+            weekdays = [
+                "星期一",
+                "星期二",
+                "星期三",
+                "星期四",
+                "星期五",
+                "星期六",
+                "星期日",
+            ]
+            current_time_str = (
+                f"{now.strftime('%Y-%m-%d %H:%M:%S')} ({weekdays[now.weekday()]})"
+            )
+
+            logger.info(f"   Current Time (UTC+8): {current_time_str}")
+
+            # Get system instruction with current time
+            system_instruction = get_system_instruction(current_time=current_time_str)
 
             config = types.LiveConnectConfig(
                 response_modalities=["AUDIO"],
