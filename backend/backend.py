@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 PROJECT_ID = "telligent-dev"
 LOCATION = "us-central1"
 MODEL_ID = "gemini-live-2.5-flash-preview-native-audio-09-2025"
-CREDENTIALS_PATH = "telligent-dev-cb65da0697d7.json"
+CREDENTIALS_PATH = "../telligent-dev-cb65da0697d7.json"
 
 # Initialize client
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = CREDENTIALS_PATH
@@ -384,7 +384,7 @@ async def websocket_handler(request):
 
 async def index(request):
     """Serve the built frontend."""
-    return web.FileResponse("./dist/index.html")
+    return web.FileResponse("../frontend/dist/index.html")
 
 
 async def init_app():
@@ -392,8 +392,8 @@ async def init_app():
     app = web.Application()
     app.router.add_get("/ws", websocket_handler)
     app.router.add_get("/", index)
-    app.router.add_static("/assets", "./dist/assets")
-    app.router.add_static("/", "./dist")
+    app.router.add_static("/assets", "../frontend/dist/assets")
+    app.router.add_static("/", "../frontend/dist")
     return app
 
 

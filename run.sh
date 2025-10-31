@@ -5,18 +5,21 @@ echo "🏨 Hotel Agent Center - Starting..."
 echo ""
 
 # Check if frontend is built
-if [ ! -d "dist" ]; then
+if [ ! -d "frontend/dist" ]; then
     echo "📦 Building frontend..."
+    cd frontend
     npm run build
+    cd ..
     echo "✅ Frontend built"
     echo ""
 fi
 
 # Start backend server
 echo "🚀 Starting backend server..."
-echo "📍 App will be available at: http://localhost:8080"
+echo "📍 App will be available at: http://localhost:8081"
 echo "💡 Press Ctrl+C to stop"
 echo ""
 
-uv run backend_simple.py
+cd backend
+uv run backend.py
 
