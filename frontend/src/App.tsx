@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 import { Message, ToolCall, WebSocketMessage, ActivityLog, TOOL_DEFINITIONS } from './types';
+import { useAudioRecording } from './hooks/useAudioRecording';
+import { useAudioPlayback } from './hooks/useAudioPlayback';
+import { useWebSocketConnection } from './hooks/useWebSocketConnection';
 
 function App() {
-    const [ws, setWs] = useState<WebSocket | null>(null);
-    const [connected, setConnected] = useState(false);
+    // UI State
     const [messages, setMessages] = useState<Message[]>([]);
-    const [isRecording, setIsRecording] = useState(false);
-    const [isSpeaking, setIsSpeaking] = useState(false);
     const [textInput, setTextInput] = useState('');
     const [toolCalls, setToolCalls] = useState<ToolCall[]>(
         TOOL_DEFINITIONS.map(tool => ({
@@ -19,86 +19,49 @@ function App() {
     const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
     const [expandedLogIds, setExpandedLogIds] = useState<Set<string>>(new Set());
 
-    const wsRef = useRef<WebSocket | null>(null);
-    const connectionPromiseRef = useRef<Promise<WebSocket> | null>(null);
-    const functionCallStartTimes = useRef<Map<string, number>>(new Map());
-
-    const audioContextRef = useRef<AudioContext | null>(null);
-    const recordingContextRef = useRef<AudioContext | null>(null);
-    const mediaStreamRef = useRef<MediaStream | null>(null);
-    const audioQueueRef = useRef<Float32Array[]>([]);
+    // Refs
     const messagesEndRef = useRef<HTMLDivElement>(null);
-    const isPlayingRef = useRef(false);
-    const nextStartTimeRef = useRef(0);
+    const functionCallStartTimes = useRef<Map<string, number>>(new Map());
     const currentAssistantMessageIdRef = useRef<string | null>(null);
     const currentUserMessageIdRef = useRef<string | null>(null);
-    const isRecordingRef = useRef(false);
 
-    // Auto-scroll to bottom
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    };
-
-    useEffect(() => {
-        scrollToBottom();
-    }, [messages]);
-
+    // WebSocket Message Handler
     const handleWebSocketMessage = useCallback((message: WebSocketMessage) => {
         console.log('Received message:', message);
 
         switch (message.type) {
             case 'session_ready':
                 console.log('Session ready');
-                // Initialize audio context
-                if (!audioContextRef.current) {
-                    audioContextRef.current = new AudioContext({ sampleRate: 24000 });
-                    nextStartTimeRef.current = 0;
-                }
                 break;
 
             case 'audio_response':
-                // Stream audio chunks immediately (low-latency playback)
-                playAudioChunkImmediately(message.data as string);
-                setIsSpeaking(true);
+                playAudioChunk(message.data as string);
                 break;
 
             case 'input_transcription':
-                // Accumulate user transcription into a single message per turn
                 if (message.text) {
                     updateLastUserMessage(message.text || '');
                 }
                 break;
 
             case 'output_transcription':
-                // Update assistant message with transcription
-                if (message.text) {
-                    updateLastAssistantMessage(message.text || '');
-                }
-                break;
-
             case 'text_response':
-                // Update assistant message with text response (from text-only backend)
                 if (message.text) {
                     updateLastAssistantMessage(message.text || '');
                 }
                 break;
 
             case 'tool_call':
-                // Update tool call status
                 handleToolCall(message.data as any);
                 break;
 
             case 'turn_complete':
-                // Turn complete, but audio continues playing until finished
-                setIsSpeaking(false);
-                // Reset current assistant message ID for next turn
                 currentAssistantMessageIdRef.current = null;
                 currentUserMessageIdRef.current = null;
                 break;
 
             case 'interrupted':
-                setIsSpeaking(false);
-                stopAllAudio();
+                stopAudio();
                 break;
 
             case 'error':
@@ -107,82 +70,37 @@ function App() {
         }
     }, []);
 
-    // Lazy connect to WebSocket only when needed
-    const connectWebSocket = useCallback((): Promise<WebSocket> => {
-        // Return existing connection if already open
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            return Promise.resolve(wsRef.current);
-        }
+    // Custom Hooks
+    const { connected, connect, sendMessage } = useWebSocketConnection({
+        url: 'ws://localhost:8081/ws',
+        onMessage: handleWebSocketMessage,
+    });
 
-        // Return existing connection promise if already connecting
-        if (connectionPromiseRef.current) {
-            return connectionPromiseRef.current;
-        }
+    const { isRecording, toggleRecording } = useAudioRecording({
+        onAudioData: async (base64Audio) => {
+            await connect();
+            sendMessage({ type: 'audio', data: base64Audio });
+        },
+    });
 
-        // Create new connection
-        connectionPromiseRef.current = new Promise((resolve, reject) => {
-            const websocket = new WebSocket('ws://localhost:8081/ws');
+    const { isSpeaking, playAudioChunk, stopAudio } = useAudioPlayback();
 
-            websocket.onopen = () => {
-                console.log('WebSocket connected');
-                setConnected(true);
-                wsRef.current = websocket;
-                setWs(websocket);
-                connectionPromiseRef.current = null;
-                resolve(websocket);
-            };
-
-            websocket.onmessage = (event) => {
-                const message: WebSocketMessage = JSON.parse(event.data);
-                handleWebSocketMessage(message);
-            };
-
-            websocket.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                setConnected(false);
-                connectionPromiseRef.current = null;
-                reject(error);
-            };
-
-            websocket.onclose = () => {
-                console.log('WebSocket disconnected');
-                setConnected(false);
-                wsRef.current = null;
-            };
-        });
-
-        return connectionPromiseRef.current;
-    }, [handleWebSocketMessage]);
-
-    // Cleanup on unmount
+    // Auto-scroll to bottom
     useEffect(() => {
-        return () => {
-            ws?.close();
-        };
-    }, [ws]);
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [messages]);
 
-    const addMessage = (type: 'user' | 'assistant', text: string) => {
-        const newMessage: Message = {
-            id: Date.now().toString(),
-            type,
-            text,
-            timestamp: new Date(),
-        };
-        setMessages(prev => [...prev, newMessage]);
-    };
-
+    // Message Management
     const updateLastAssistantMessage = (text: string) => {
         setMessages(prev => {
             const newMessages = [...prev];
 
-            // Try to find the current assistant message being accumulated
             if (currentAssistantMessageIdRef.current) {
                 const messageIndex = newMessages.findIndex(
                     msg => msg.id === currentAssistantMessageIdRef.current
                 );
 
                 if (messageIndex !== -1) {
-                    // Accumulate text to the existing message
                     newMessages[messageIndex] = {
                         ...newMessages[messageIndex],
                         text: newMessages[messageIndex].text + text,
@@ -191,7 +109,6 @@ function App() {
                 }
             }
 
-            // No current message, create a new one
             const newMessageId = Date.now().toString();
             currentAssistantMessageIdRef.current = newMessageId;
 
@@ -233,6 +150,17 @@ function App() {
         });
     };
 
+    const addMessage = (type: 'user' | 'assistant', text: string) => {
+        const newMessage: Message = {
+            id: Date.now().toString(),
+            type,
+            text,
+            timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, newMessage]);
+    };
+
+    // Tool Call Management
     const handleToolCall = (toolCallData: any) => {
         if (toolCallData.functionCalls) {
             toolCallData.functionCalls.forEach((fc: any) => {
@@ -240,7 +168,6 @@ function App() {
                 const startTime = Date.now();
                 functionCallStartTimes.current.set(logId, startTime);
 
-                // Create activity log with executing status
                 const activityLog: ActivityLog = {
                     id: logId,
                     type: 'function_call',
@@ -251,7 +178,6 @@ function App() {
                 };
                 setActivityLogs(prev => [activityLog, ...prev]);
 
-                // Update tool status
                 setToolCalls(prev =>
                     prev.map(tool =>
                         tool.id === fc.name
@@ -260,11 +186,9 @@ function App() {
                     )
                 );
 
-                // Mark as completed after 2 seconds (simulated)
                 setTimeout(() => {
                     const executionTime = Date.now() - startTime;
 
-                    // Update activity log with complete status and execution time
                     setActivityLogs(prev =>
                         prev.map(log =>
                             log.id === logId
@@ -281,7 +205,6 @@ function App() {
 
                     functionCallStartTimes.current.delete(logId);
 
-                    // Reset to idle after 3 more seconds
                     setTimeout(() => {
                         setToolCalls(prev =>
                             prev.map(tool =>
@@ -294,174 +217,7 @@ function App() {
         }
     };
 
-    const playAudioChunkImmediately = async (base64Audio: string) => {
-        try {
-            // Decode base64 to PCM data
-            const binaryString = atob(base64Audio);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-            }
-
-            // Convert PCM16 to Float32
-            const pcm16 = new Int16Array(bytes.buffer);
-            const float32 = new Float32Array(pcm16.length);
-            for (let i = 0; i < pcm16.length; i++) {
-                float32[i] = pcm16[i] / 32768.0;
-            }
-
-            // Add to queue
-            audioQueueRef.current.push(float32);
-
-            // Start playback if not already playing
-            if (!isPlayingRef.current) {
-                playNextChunk();
-            }
-        } catch (error) {
-            console.error('Error processing audio chunk:', error);
-        }
-    };
-
-    const playNextChunk = async () => {
-        if (audioQueueRef.current.length === 0) {
-            isPlayingRef.current = false;
-            return;
-        }
-
-        isPlayingRef.current = true;
-
-        try {
-            // Ensure audio context exists
-            if (!audioContextRef.current) {
-                audioContextRef.current = new AudioContext({ sampleRate: 24000 });
-            }
-
-            const audioContext = audioContextRef.current;
-
-            // Resume audio context if suspended (browser autoplay policy)
-            if (audioContext.state === 'suspended') {
-                await audioContext.resume();
-            }
-
-            // Get next chunk
-            const chunk = audioQueueRef.current.shift();
-            if (!chunk) {
-                isPlayingRef.current = false;
-                return;
-            }
-
-            // Create audio buffer for this chunk
-            const audioBuffer = audioContext.createBuffer(1, chunk.length, 24000);
-            audioBuffer.copyToChannel(new Float32Array(chunk), 0);
-
-            // Create source and schedule playback
-            const source = audioContext.createBufferSource();
-            source.buffer = audioBuffer;
-            source.connect(audioContext.destination);
-
-            // Calculate when to start this chunk
-            const currentTime = audioContext.currentTime;
-            if (nextStartTimeRef.current < currentTime) {
-                nextStartTimeRef.current = currentTime;
-            }
-
-            source.start(nextStartTimeRef.current);
-
-            // Update next start time
-            nextStartTimeRef.current += audioBuffer.duration;
-
-            // Play next chunk when this one finishes
-            source.onended = () => {
-                playNextChunk();
-            };
-        } catch (error) {
-            console.error('Error playing audio chunk:', error);
-            isPlayingRef.current = false;
-            playNextChunk(); // Try next chunk
-        }
-    };
-
-    const stopAllAudio = () => {
-        try {
-            // Clear queue
-            audioQueueRef.current = [];
-            isPlayingRef.current = false;
-
-            // Reset timing
-            if (audioContextRef.current) {
-                nextStartTimeRef.current = audioContextRef.current.currentTime;
-            }
-        } catch (error) {
-            // Ignore errors when stopping
-        }
-    };
-
-    const startRecording = async () => {
-        try {
-            // Ensure WebSocket is connected
-            await connectWebSocket();
-
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mediaStreamRef.current = stream;
-            const audioContext = new AudioContext({ sampleRate: 16000 });
-            recordingContextRef.current = audioContext;
-
-            const source = audioContext.createMediaStreamSource(stream);
-            const processor = audioContext.createScriptProcessor(4096, 1, 1);
-
-            source.connect(processor);
-            processor.connect(audioContext.destination);
-
-            processor.onaudioprocess = (e) => {
-                if (!isRecordingRef.current || !wsRef.current) return;
-
-                const inputData = e.inputBuffer.getChannelData(0);
-
-                // Convert Float32 to PCM16
-                const pcm16 = new Int16Array(inputData.length);
-                for (let i = 0; i < inputData.length; i++) {
-                    const s = Math.max(-1, Math.min(1, inputData[i]));
-                    pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-                }
-
-                // Convert to base64
-                const bytes = new Uint8Array(pcm16.buffer);
-                const base64 = btoa(String.fromCharCode(...bytes));
-
-                // Send to WebSocket - Live API will handle VAD automatically
-                wsRef.current.send(JSON.stringify({
-                    type: 'audio',
-                    data: base64,
-                }));
-            };
-
-            setIsRecording(true);
-            isRecordingRef.current = true;
-        } catch (error) {
-            console.error('Error starting recording:', error);
-        }
-    };
-
-    const stopRecording = () => {
-        setIsRecording(false);
-        isRecordingRef.current = false;
-
-        if (recordingContextRef.current) {
-            recordingContextRef.current.close();
-            recordingContextRef.current = null;
-        }
-
-        if (mediaStreamRef.current) {
-            mediaStreamRef.current.getTracks().forEach(t => t.stop());
-            mediaStreamRef.current = null;
-        }
-
-        // Signal end of audio stream
-        if (wsRef.current) {
-            wsRef.current.send(JSON.stringify({ type: 'audio_end' }));
-        }
-    };
-
+    // Text Message Handling
     const sendTextMessage = async () => {
         if (!textInput.trim()) return;
 
@@ -469,24 +225,27 @@ function App() {
         addMessage('user', messageText);
         setTextInput('');
 
-        // Reset current assistant message for next response
         currentAssistantMessageIdRef.current = null;
 
         try {
-            // Ensure WebSocket is connected
-            const websocket = await connectWebSocket();
-
-            // Send the message
-            websocket.send(JSON.stringify({
-                type: 'text',
-                text: messageText,
-            }));
+            await connect();
+            sendMessage({ type: 'text', text: messageText });
         } catch (error) {
             console.error('Failed to send message:', error);
         }
     };
 
-    // Helper functions
+    // Recording Control
+    const handleRecordingToggle = async () => {
+        if (!isRecording) {
+            await connect();
+        } else {
+            sendMessage({ type: 'audio_end' });
+        }
+        toggleRecording();
+    };
+
+    // Helper Functions
     const toggleExpandLog = (logId: string) => {
         setExpandedLogIds(prev => {
             const newSet = new Set(prev);
@@ -587,6 +346,8 @@ function App() {
                         )}
                     </div>
                 </div>
+
+                {/* Conversation Panel */}
                 <div className="conversation-panel">
                     <div className="messages-container">
                         {messages.length === 0 ? (
@@ -630,12 +391,8 @@ function App() {
                         <div className="input-wrapper">
                             <button
                                 className={`record-button ${isRecording ? 'recording' : ''}`}
-                                onMouseDown={startRecording}
-                                onMouseUp={stopRecording}
-                                onMouseLeave={isRecording ? stopRecording : undefined}
-                                onTouchStart={startRecording}
-                                onTouchEnd={stopRecording}
-                                title="Hold to speak"
+                                onClick={handleRecordingToggle}
+                                title={isRecording ? "Stop recording" : "Start recording"}
                             >
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                     <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
@@ -713,4 +470,3 @@ function App() {
 }
 
 export default App;
-

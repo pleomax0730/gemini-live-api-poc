@@ -85,6 +85,7 @@ class LiveAPISession:
 
             config = types.LiveConnectConfig(
                 response_modalities=["AUDIO"],
+                temperature=0.0,
                 input_audio_transcription=AudioTranscriptionConfig(),
                 output_audio_transcription=AudioTranscriptionConfig(),
                 system_instruction=system_instruction,
